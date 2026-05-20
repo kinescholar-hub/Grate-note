@@ -249,9 +249,24 @@
     </div>
 
     <!-- Toast -->
-    <div id="gesture-toast" class="fixed top-20 md:top-24 left-1/2 transform -translate-x-1/2 z-[20000] liquid-glass px-5 py-2.5 md:px-6 md:py-3 rounded-full opacity-0 pointer-events-none scale-90 flex items-center shadow-2xl transition-all duration-300">
-        <i id="toast-icon" data-lucide="info" class="w-4 h-4 md:w-5 md:h-5 mr-2.5 text-ios-text dark:text-white theme-transition"></i>
-        <span id="toast-text" class="text-[14px] md:text-[16px] font-extrabold tracking-tight text-ios-text dark:text-white theme-transition">Action</span>
+    <div id="toast-container" class="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 flex flex-col items-center space-y-2 pointer-events-none"></div>
+
+    <div id="zoom-indicator" class="fixed top-24 left-1/2 transform -translate-x-1/2 z-50 liquid-glass rounded-full px-4 py-2 text-ios-text dark:text-ios-darkText font-bold text-sm shadow-md transition-opacity duration-300 opacity-0 pointer-events-none flex items-center gap-2 cursor-pointer" onclick="window.setZoom(1)">
+        <i data-lucide="zoom-in" class="w-4 h-4"></i>
+        <span id="zoom-text">100%</span>
+    </div>
+
+    <div id="lasso-menu" class="fixed z-50 liquid-glass rounded-xl px-2 py-1 shadow-md transition-opacity duration-200 opacity-0 pointer-events-none flex items-center gap-1">
+        <button onclick="window.deleteLassoSelection()" class="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg text-red-500 pointer-events-auto">
+            <i data-lucide="trash-2" class="w-5 h-5"></i>
+        </button>
+        <div class="w-px h-6 bg-black/10 dark:bg-white/10"></div>
+        <button onclick="window.recolorLassoSelection()" class="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg text-ios-blue pointer-events-auto" title="Apply Current Pen Color">
+            <i data-lucide="palette" class="w-5 h-5"></i>
+        </button>
+        <button onclick="window.duplicateLassoSelection()" class="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg text-ios-blue pointer-events-auto">
+            <i data-lucide="copy" class="w-5 h-5"></i>
+        </button>
     </div>
 
     <!-- MAIN APP STRUCTURE -->
@@ -550,7 +565,7 @@
             return new Promise((resolve, reject) => {
                 const tx = localDB.transaction(STORE_NAME, 'readwrite');
                 const store = tx.objectStore(STORE_NAME);
-                const request = store.delete(id);
+                const request = tx.objectStore(STORE_NAME).delete(id);
                 
                 request.onsuccess = () => resolve();
                 request.onerror = () => reject(request.error);
@@ -709,20 +724,16 @@
         }
 
         function showToast(text, icon = 'info') {
-            const toast = document.getElementById('gesture-toast');
-            if (!toast) return;
-            document.getElementById('toast-text').innerText = text;
-            document.getElementById('toast-icon').setAttribute('data-lucide', icon);
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'liquid-glass px-6 py-3 rounded-full flex items-center shadow-xl transition-all duration-300';
+            toast.innerHTML = `<i data-lucide="${icon}" class="w-5 h-5 mr-3 text-ios-text dark:text-white"></i><span class="font-bold text-ios-text dark:text-white">${text}</span>`;
+            container.appendChild(toast);
             lucide.createIcons();
-            
-            toast.classList.remove('opacity-0', 'scale-90', 'pointer-events-none');
-            toast.classList.add('opacity-100', 'scale-100');
-            
-            clearTimeout(toastTimeout);
-            toastTimeout = setTimeout(() => {
-                toast.classList.remove('opacity-100', 'scale-100');
-                toast.classList.add('opacity-0', 'scale-90', 'pointer-events-none');
-            }, 1200);
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'scale-90');
+                setTimeout(() => toast.remove(), 300);
+            }, 2000);
         }
 
         function showModal(title, message, confirmText, isDestructive, onConfirm, showInput = false, defaultInput = "", showTemplates = false) {
@@ -1135,7 +1146,7 @@
                 document.getElementById('theme-icon').setAttribute('data-lucide', 'moon'); 
             }
             
-            document.getElementById('meta-theme-color').setAttribute('content', isDarkMode ? '#000000' : '#F2F2F7');
+            document.getElementById('meta-theme-color')?.setAttribute('content', isDarkMode ? '#000000' : '#F2F2F7');
             lucide.createIcons();
             
             customPageTheme = null; 
@@ -1629,10 +1640,23 @@
             if(e.cancelable) e.preventDefault(); 
         }
 
-        function adjustZoom(delta) {
+        function adjustZoom(delta, cx, cy) {
             let newZoom = zoomLevel + delta;
             newZoom = Math.max(0.5, Math.min(newZoom, 4.0)); 
-            setZoom(newZoom, true);
+            setZoom(newZoom, false);
+            
+            const ind = document.getElementById('zoom-indicator');
+            const txt = document.getElementById('zoom-text');
+            if (ind && txt) {
+                txt.innerText = `${Math.round(zoomLevel * 100)}%`;
+                ind.classList.remove('opacity-0', 'pointer-events-none');
+                ind.classList.add('pointer-events-auto');
+                clearTimeout(indicatorTimeout);
+                indicatorTimeout = setTimeout(() => {
+                    ind.classList.add('opacity-0', 'pointer-events-none');
+                    ind.classList.remove('pointer-events-auto');
+                }, 2000);
+            }
         }
 
         function setZoom(level, animate = false) {
@@ -1992,7 +2016,14 @@
                 if (!bgCanvas || !drawCanvas) return;
                 bgCtx = bgCanvas.getContext('2d'); 
                 drawCtx = drawCanvas.getContext('2d');
-                bgCtx.clearRect(0, 0, page.width, page.height); 
+                
+                bgCtx.save();
+                bgCtx.setTransform(1, 0, 0, 1, 0, 0); 
+                bgCtx.fillStyle = isPaperDark() ? '#1C1C1E' : '#FFFFFF';
+                const dpr = Math.min(window.devicePixelRatio || 2, 2);
+                bgCtx.fillRect(0, 0, page.width * dpr, page.height * dpr);
+                bgCtx.restore();
+
                 drawCtx.clearRect(0, 0, page.width, page.height);
             }
 
@@ -2371,6 +2402,11 @@
             wrapper.appendChild(input);
             input.focus();
 
+            input.addEventListener('input', () => {
+                input.style.height = 'auto';
+                input.style.height = input.scrollHeight + 'px';
+            });
+
             input.addEventListener('blur', () => {
                 const val = input.value;
                 if (val.trim()) {
@@ -2417,6 +2453,7 @@
         }
 
         function finalizeLasso(pageIndex) {
+            hideLassoMenu();
             if (window.lassoedPaths && window.lassoedPaths.length > 0) {
                 const nb = notebooks.find(n => n.id === activeTabId);
                 const page = nb.pages[pageIndex];
@@ -2435,7 +2472,83 @@
             }
         }
 
+        function showLassoMenu(activeCanvas, pageIndex) {
+            const menu = document.getElementById('lasso-menu');
+            if (!menu || !window.lassoBoundingBox) return;
+            const box = window.lassoBoundingBox;
+            const rect = activeCanvas.getBoundingClientRect();
+            const screenX = rect.left + (box.x * zoomLevel) + (box.w * zoomLevel / 2) - 60; 
+            const screenY = rect.top + (box.y * zoomLevel) - 50; 
+            
+            menu.style.left = `${Math.max(10, screenX)}px`;
+            menu.style.top = `${Math.max(10, screenY)}px`;
+            menu.classList.remove('opacity-0', 'pointer-events-none');
+            
+            window.activeLassoPageIndex = pageIndex; 
+        }
+
+        function hideLassoMenu() {
+            const menu = document.getElementById('lasso-menu');
+            if (menu) menu.classList.add('opacity-0', 'pointer-events-none');
+        }
+
+        function deleteLassoSelection() {
+            if (!window.lassoedPaths) return;
+            window.lassoedPaths = null;
+            window.lassoBoundingBox = null;
+            const nb = notebooks.find(n => n.id === activeTabId);
+            saveNotebook(nb);
+            redrawPage(window.activeLassoPageIndex);
+            updateUndoRedoUI();
+            hideLassoMenu();
+            
+            const activeCanvas = document.getElementById(`active-canvas-${window.activeLassoPageIndex}`);
+            if (activeCanvas) {
+                const actCtx = activeCanvas.getContext('2d');
+                actCtx.clearRect(0,0,activeCanvas.width,activeCanvas.height);
+            }
+        }
+        
+        function duplicateLassoSelection() {
+            if (!window.lassoedPaths) return;
+            const duplicated = window.lassoedPaths.map(p => {
+                const clone = JSON.parse(JSON.stringify(p));
+                if (clone.tool === 'image' || clone.tool === 'text') {
+                    clone.x += 40; clone.y += 40;
+                } else if (clone.points) {
+                    clone.points.forEach(pt => { pt.x += 40; pt.y += 40; });
+                }
+                return clone;
+            });
+            window.lassoedPaths = window.lassoedPaths.concat(duplicated);
+            window.lassoBoundingBox.x += 20; 
+            window.lassoBoundingBox.y += 20;
+            window.lassoBoundingBox.w += 40; 
+            window.lassoBoundingBox.h += 40;
+            
+            const activeCanvas = document.getElementById(`active-canvas-${window.activeLassoPageIndex}`);
+            if (activeCanvas) {
+                drawLassoSelection(activeCanvas);
+                showLassoMenu(activeCanvas, window.activeLassoPageIndex);
+            }
+        }
+
+        function recolorLassoSelection() {
+            if (!window.lassoedPaths) return;
+            window.lassoedPaths.forEach(p => {
+                if (p.tool !== 'image') {
+                    p.color = activeColor;
+                }
+            });
+            const activeCanvas = document.getElementById(`active-canvas-${window.activeLassoPageIndex}`);
+            if (activeCanvas) {
+                drawLassoSelection(activeCanvas);
+            }
+            showToast("Recolored", "palette");
+        }
+
         function bindCanvasEvents(activeCanvas, drawingCanvas, pageIndex, wrapper) {
+            let lastTapTime = 0;
             
             activeCanvas.addEventListener('touchstart', (e) => {
                 if (currentTool === 'pan') return; 
@@ -2543,6 +2656,22 @@
             let lastRenderedIndex = 0;
 
             activeCanvas.addEventListener('pointerdown', (e) => {
+                if (e.pointerType === 'pen') {
+                    const now = Date.now();
+                    if (now - lastTapTime < 300) {
+                        if (currentTool === 'eraser') {
+                            setTool(window.previousTool || 'pen');
+                        } else {
+                            window.previousTool = currentTool;
+                            setTool('eraser');
+                        }
+                        updateToolbar();
+                        showToast(currentTool === 'eraser' ? 'Eraser' : 'Pen', 'pencil');
+                        return;
+                    }
+                    lastTapTime = now;
+                }
+
                 if (isDraggingObject || currentTool === 'pan') return; 
                 if (touchStartFingers >= 2) return;
                 if (stylusOnlyMode && e.pointerType !== 'pen') return; 
@@ -2561,6 +2690,7 @@
                         if (coords.x >= box.x - 10 && coords.x <= box.x + box.w + 10 && coords.y >= box.y - 10 && coords.y <= box.y + box.h + 10) {
                             window.isDraggingLasso = true;
                             window.lassoDragStart = coords;
+                            hideLassoMenu();
                             return;
                         } else {
                             finalizeLasso(pageIndex);
@@ -2798,6 +2928,7 @@
                 if (currentTool === 'lasso') {
                     if (window.isDraggingLasso) {
                         window.isDraggingLasso = false;
+                        showLassoMenu(activeCanvas, pageIndex);
                         return;
                     }
                     if (isDrawing && window.lassoPath && window.lassoPath.length > 5) {
@@ -2839,6 +2970,7 @@
                             actCtx.clearRect(0,0,activeCanvas.width/dpr, activeCanvas.height/dpr);
                             redrawPage(pageIndex);
                             drawLassoSelection(activeCanvas);
+                            showLassoMenu(activeCanvas, pageIndex);
                         } else {
                             const actCtx = activeCanvas.getContext('2d');
                             const dpr = Math.min(window.devicePixelRatio || 2, 2);
@@ -3099,7 +3231,7 @@
             drawPaperTemplate, renderPathOnContext, getPathAtLocation, getCoordinates, snapToShape, bindCanvasEvents,
             exportCurrentPagePNG, exportToPDF, exportNativeBackup, handleImageInsert, handlePdfUpload,
             showToast, showModal, closeModal, showLoading, hideLoading, openExportMenu, closeExportMenu, openPageSettingsModal,
-            closePageSettingsModal, handleFileUpload
+            closePageSettingsModal, handleFileUpload, deleteLassoSelection, duplicateLassoSelection, recolorLassoSelection
         });
 
         document.addEventListener('DOMContentLoaded', init);

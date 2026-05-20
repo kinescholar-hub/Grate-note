@@ -387,6 +387,12 @@
                         <button onclick="window.setTool('line')" id="tool-line" class="tool-btn p-2 md:p-3 w-10 md:w-[48px] flex justify-center rounded-[20px] md:rounded-[24px] spring-btn text-gray-500 hidden lg:flex theme-transition" title="Straight Line Shape">
                             <i data-lucide="ruler" class="w-5 h-5 md:w-6 md:h-6 stroke-[2]"></i>
                         </button>
+                        <button onclick="window.setTool('lasso')" id="tool-lasso" class="tool-btn p-2 md:p-3 w-10 md:w-[48px] flex justify-center rounded-[20px] md:rounded-[24px] spring-btn text-gray-500 theme-transition" title="Lasso Tool">
+                            <i data-lucide="lasso-select" class="w-5 h-5 md:w-6 md:h-6 stroke-[2]"></i>
+                        </button>
+                        <button onclick="window.setTool('text')" id="tool-text" class="tool-btn p-2 md:p-3 w-10 md:w-[48px] flex justify-center rounded-[20px] md:rounded-[24px] spring-btn text-gray-500 theme-transition" title="Text Tool">
+                            <i data-lucide="type" class="w-5 h-5 md:w-6 md:h-6 stroke-[2]"></i>
+                        </button>
                         <div class="w-px h-4 md:h-6 bg-black/10 dark:bg-white/10 theme-transition hidden sm:block"></div>
                         <button onclick="window.setTool('eraser')" id="tool-eraser" class="tool-btn p-2 md:p-3 w-10 md:w-[48px] flex justify-center rounded-[20px] md:rounded-[24px] spring-btn text-gray-500 theme-transition" title="Eraser">
                             <i data-lucide="eraser" class="w-5 h-5 md:w-6 md:h-6 stroke-[2]"></i>
@@ -648,9 +654,18 @@
             setupPinchToZoom(); 
             setupColorPicker();
             
-            document.getElementById('canvas-viewport').addEventListener('scroll', () => {
+            document.getElementById('canvas-viewport').addEventListener('scroll', (e) => {
                 if (view !== 'document') return;
                 
+                const el = e.target;
+                if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
+                    if (!window.isAddingPage) {
+                        window.isAddingPage = true;
+                        addBlankPage('ruled', false); 
+                        setTimeout(() => window.isAddingPage = false, 1500);
+                    }
+                }
+
                 updatePageIndicatorUI();
                 
                 clearTimeout(scrollThumbTimeout);
@@ -817,6 +832,25 @@
             exportContent.classList.remove('scale-100'); 
             exportContent.classList.add('scale-90');
             setTimeout(() => { exportModal.classList.remove('active'); }, 300);
+        }
+
+        function exportNativeBackup() {
+            const nb = notebooks.find(n => n.id === activeTabId);
+            if (!nb) return;
+            showLoading("Packaging Backup", "Preparing .gn file...");
+            setTimeout(() => {
+                const data = JSON.stringify(nb);
+                const blob = new Blob([data], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${nb.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.gn`;
+                a.click();
+                URL.revokeObjectURL(url);
+                hideLoading();
+                closeExportMenu();
+                showToast("Backup Saved", "database");
+            }, 500);
         }
 
         function openPageSettingsModal() {
@@ -1112,6 +1146,7 @@
             if(activeTabId) highlightThumbnail(activePageIndex); 
             
             document.querySelectorAll('.page-wrapper').forEach(w => {
+                w.style.backgroundColor = isPaperDark() ? '#1C1C1E' : '#FFFFFF';
                 if (isPaperDark()) { 
                     w.classList.remove('bg-white'); 
                     w.classList.add('bg-ios-paperDark'); 
@@ -1133,6 +1168,7 @@
             showToast(`Page Color: ${customPageTheme === 'dark' ? 'Dark' : customPageTheme === 'light' ? 'Light' : 'Auto'}`, 'palette');
             
             document.querySelectorAll('.page-wrapper').forEach(w => {
+                w.style.backgroundColor = isPaperDark() ? '#1C1C1E' : '#FFFFFF';
                 if (isPaperDark()) { 
                     w.classList.remove('bg-white'); 
                     w.classList.add('bg-ios-paperDark'); 
@@ -1462,7 +1498,7 @@
             lucide.createIcons(); 
         }
 
-        function addBlankPage(type = 'ruled') {
+        function addBlankPage(type = 'ruled', autoScroll = true) {
             const nb = notebooks.find(n => n.id === activeTabId); 
             if (!nb) return;
             
@@ -1481,16 +1517,18 @@
             });
             
             saveNotebook(nb);
-            activePageIndex = insertIndex; 
+            if(autoScroll) activePageIndex = insertIndex; 
             updateDocumentUI();
 
-            setTimeout(() => { 
-                const w = document.getElementById(`page-wrapper-${insertIndex}`); 
-                if (w) { 
-                    w.scrollIntoView({ behavior: 'smooth', block: 'center' }); 
-                    highlightThumbnail(insertIndex); 
-                } 
-            }, 100);
+            if (autoScroll) {
+                setTimeout(() => { 
+                    const w = document.getElementById(`page-wrapper-${insertIndex}`); 
+                    if (w) { 
+                        w.scrollIntoView({ behavior: 'smooth', block: 'center' }); 
+                        highlightThumbnail(insertIndex); 
+                    } 
+                }, 100);
+            }
 
             closeModal();
         }
@@ -1619,6 +1657,9 @@
         }
 
         function setTool(tool) {
+            if (currentTool === 'lasso' && window.lassoedPaths) {
+                finalizeLasso(activePageIndex);
+            }
             currentTool = tool;
             selectedImage = null; 
             renderedPages.forEach(idx => redrawPage(idx)); 
@@ -1662,7 +1703,7 @@
         }
 
         function updateToolbar() {
-            ['pan', 'pen', 'highlighter', 'line', 'eraser', 'laser'].forEach(t => {
+            ['pan', 'pen', 'highlighter', 'line', 'eraser', 'laser', 'lasso', 'text'].forEach(t => {
                 const btn = document.getElementById(`tool-${t}`); 
                 if (!btn) return;
                 const icon = btn.querySelector('svg') || btn.querySelector('i');
@@ -1881,6 +1922,7 @@
             nb.pages.forEach((page, index) => {
                 const wrapper = document.createElement('div');
                 wrapper.className = `page-wrapper relative flex-shrink-0 shadow-page dark:shadow-page-dark ${isPaperDark() ? 'bg-ios-paperDark' : 'bg-white'} overflow-hidden rounded-xl`; 
+                wrapper.style.backgroundColor = isPaperDark() ? '#1C1C1E' : '#FFFFFF';
                 wrapper.style.width = `${page.width * zoomLevel}px`;
                 wrapper.style.height = `${page.height * zoomLevel}px`;
                 wrapper.setAttribute('data-page-index', index);
@@ -2104,6 +2146,18 @@
                 return;
             }
 
+            if (path.tool === 'text') {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.fillStyle = path.color;
+                ctx.font = `${path.size}px sans-serif`;
+                ctx.textBaseline = 'top';
+                const lines = path.text.split('\n');
+                lines.forEach((line, i) => {
+                    ctx.fillText(line, path.x, path.y + (i * path.size * 1.2));
+                });
+                return;
+            }
+
             let renderColor = path.color;
             if (!isExport && isPaperDark() && path.color.toUpperCase() === '#1C1C1E' && path.tool !== 'highlighter') {
                 renderColor = '#FFFFFF';
@@ -2117,7 +2171,6 @@
                 ctx.globalCompositeOperation = 'source-over'; 
                 ctx.globalAlpha = 0.5; 
                 ctx.strokeStyle = renderColor; 
-                ctx.lineWidth = path.width;
                 
                 ctx.beginPath(); 
                 ctx.moveTo(path.points[0].x, path.points[0].y);
@@ -2126,11 +2179,24 @@
                         const xc = (path.points[i].x + path.points[i+1].x) / 2;
                         const yc = (path.points[i].y + path.points[i+1].y) / 2;
                         ctx.quadraticCurveTo(path.points[i].x, path.points[i].y, xc, yc);
+                        
+                        // Apple Pencil Tilt implementation
+                        if (path.points[i].tiltX || path.points[i].tiltY) {
+                            const tiltMag = Math.max(Math.abs(path.points[i].tiltX || 0), Math.abs(path.points[i].tiltY || 0));
+                            ctx.lineWidth = path.width * (1 + (tiltMag / 45));
+                        } else {
+                            ctx.lineWidth = path.width;
+                        }
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.moveTo(xc, yc);
                     }
                     ctx.lineTo(path.points[path.points.length - 1].x, path.points[path.points.length - 1].y);
                 } else if(path.points.length === 2) {
+                    ctx.lineWidth = path.width;
                     ctx.lineTo(path.points[1].x, path.points[1].y); 
                 } else {
+                    ctx.lineWidth = path.width;
                     ctx.lineTo(path.points[0].x + 0.1, path.points[0].y);
                 }
                 ctx.stroke();
@@ -2197,12 +2263,52 @@
             return -1;
         }
 
+        // --- Path Simplification (Douglas-Peucker) ---
+        function simplifyPath(points, tolerance) {
+            if (points.length <= 2) return points;
+            let dmax = 0;
+            let index = 0;
+            const end = points.length - 1;
+            
+            for (let i = 1; i < end; i++) {
+                const d = perpendicularDistance(points[i], points[0], points[end]);
+                if (d > dmax) {
+                    index = i;
+                    dmax = d;
+                }
+            }
+            
+            if (dmax > tolerance) {
+                const recResults1 = simplifyPath(points.slice(0, index + 1), tolerance);
+                const recResults2 = simplifyPath(points.slice(index), tolerance);
+                return recResults1.slice(0, recResults1.length - 1).concat(recResults2);
+            } else {
+                return [points[0], points[end]];
+            }
+        }
+
+        function perpendicularDistance(point, lineStart, lineEnd) {
+            const dx = lineEnd.x - lineStart.x;
+            const dy = lineEnd.y - lineStart.y;
+            const mag = Math.hypot(dx, dy);
+            if (mag > 0.0) {
+                const dxp = point.x - lineStart.x;
+                const dyp = point.y - lineStart.y;
+                const cross = dx * dyp - dy * dxp;
+                return Math.abs(cross) / mag;
+            } else {
+                return Math.hypot(point.x - lineStart.x, point.y - lineStart.y);
+            }
+        }
+
         function getCoordinates(e, canvas) {
             const rect = canvas.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 2, 2);
             return { 
                 x: (e.clientX - rect.left) * ((canvas.width / dpr) / rect.width), 
                 y: (e.clientY - rect.top) * ((canvas.height / dpr) / rect.height), 
                 pressure: e.pointerType === 'pen' ? e.pressure : null, 
+                tiltX: e.pointerType === 'pen' ? e.tiltX : 0,
+                tiltY: e.pointerType === 'pen' ? e.tiltY : 0,
                 timestamp: e.timeStamp 
             };
         }
@@ -2240,6 +2346,93 @@
             const actCtx = currentActiveCanvas.getContext('2d', { desynchronized: true });
             actCtx.clearRect(0, 0, currentActiveCanvas.width / Math.min(window.devicePixelRatio || 2, 2), currentActiveCanvas.height / Math.min(window.devicePixelRatio || 2, 2));
             renderPathOnContext(actCtx, { tool: currentTool, color: activeColor, width: activeSize, points: strokePoints });
+        }
+
+        function spawnTextBox(x, y, pageIndex, wrapper) {
+            const nb = notebooks.find(n => n.id === activeTabId);
+            const page = nb.pages[pageIndex];
+
+            const input = document.createElement('textarea');
+            input.style.position = 'absolute';
+            input.style.left = `${x * zoomLevel}px`;
+            input.style.top = `${y * zoomLevel}px`;
+            input.style.width = '200px';
+            input.style.minHeight = '40px';
+            input.style.background = 'transparent';
+            input.style.border = '1px dashed #0A84FF';
+            input.style.color = activeColor;
+            input.style.fontSize = `${activeSize * 2 * zoomLevel}px`;
+            input.style.fontFamily = 'sans-serif';
+            input.style.resize = 'both';
+            input.style.overflow = 'hidden';
+            input.style.outline = 'none';
+            input.style.zIndex = '100';
+            
+            wrapper.appendChild(input);
+            input.focus();
+
+            input.addEventListener('blur', () => {
+                const val = input.value;
+                if (val.trim()) {
+                    page.paths.push({
+                        tool: 'text',
+                        text: val,
+                        x: x,
+                        y: y,
+                        color: activeColor,
+                        size: activeSize * 2
+                    });
+                    saveNotebook(nb);
+                    redrawPage(pageIndex);
+                    updateUndoRedoUI();
+                }
+                wrapper.removeChild(input);
+            });
+        }
+
+        function isPointInPolygon(point, vs) {
+            let x = point.x, y = point.y, inside = false;
+            for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+                let xi = vs[i].x, yi = vs[i].y, xj = vs[j].x, yj = vs[j].y;
+                let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        }
+
+        function drawLassoSelection(activeCanvas) {
+            if (!window.lassoedPaths || window.lassoedPaths.length === 0) return;
+            const actCtx = activeCanvas.getContext('2d', { desynchronized: true });
+            const dpr = Math.min(window.devicePixelRatio || 2, 2);
+            actCtx.clearRect(0, 0, activeCanvas.width / dpr, activeCanvas.height / dpr);
+            
+            window.lassoedPaths.forEach(p => renderPathOnContext(actCtx, p));
+            
+            const box = window.lassoBoundingBox;
+            actCtx.strokeStyle = '#0A84FF';
+            actCtx.lineWidth = 2;
+            actCtx.setLineDash([6, 6]);
+            actCtx.strokeRect(box.x - 5, box.y - 5, box.w + 10, box.h + 10);
+            actCtx.setLineDash([]);
+        }
+
+        function finalizeLasso(pageIndex) {
+            if (window.lassoedPaths && window.lassoedPaths.length > 0) {
+                const nb = notebooks.find(n => n.id === activeTabId);
+                const page = nb.pages[pageIndex];
+                page.paths = page.paths.concat(window.lassoedPaths);
+                window.lassoedPaths = null;
+                window.lassoBoundingBox = null;
+                saveNotebook(nb);
+                redrawPage(pageIndex);
+                updateUndoRedoUI();
+                
+                const activeCanvas = document.getElementById(`active-canvas-${pageIndex}`);
+                if (activeCanvas) {
+                    const actCtx = activeCanvas.getContext('2d');
+                    actCtx.clearRect(0,0,activeCanvas.width,activeCanvas.height);
+                }
+            }
         }
 
         function bindCanvasEvents(activeCanvas, drawingCanvas, pageIndex, wrapper) {
@@ -2347,6 +2540,7 @@
             });
 
             let renderQueue = false;
+            let lastRenderedIndex = 0;
 
             activeCanvas.addEventListener('pointerdown', (e) => {
                 if (isDraggingObject || currentTool === 'pan') return; 
@@ -2354,6 +2548,30 @@
                 if (stylusOnlyMode && e.pointerType !== 'pen') return; 
                 if (e.pointerType === 'mouse' && e.button !== 0) return;
                 
+                const coords = getCoordinates(e, activeCanvas);
+
+                if (currentTool === 'text') {
+                    spawnTextBox(coords.x, coords.y, pageIndex, wrapper);
+                    return;
+                }
+
+                if (currentTool === 'lasso') {
+                    if (window.lassoedPaths && window.lassoedPaths.length > 0) {
+                        const box = window.lassoBoundingBox;
+                        if (coords.x >= box.x - 10 && coords.x <= box.x + box.w + 10 && coords.y >= box.y - 10 && coords.y <= box.y + box.h + 10) {
+                            window.isDraggingLasso = true;
+                            window.lassoDragStart = coords;
+                            return;
+                        } else {
+                            finalizeLasso(pageIndex);
+                        }
+                    }
+                    isDrawing = true;
+                    currentActiveCanvas = activeCanvas;
+                    window.lassoPath = [coords];
+                    return;
+                }
+
                 isDrawing = true;
                 setSyncing(true); 
 
@@ -2362,9 +2580,9 @@
                 activePageIndexForDrawing = pageIndex;
                 strokePoints = [];
                 hasSnapped = false;
+                lastRenderedIndex = 1;
                 clearTimeout(shapeSnapTimeout);
                 
-                const coords = getCoordinates(e, activeCanvas);
                 if (coords.pressure === null) coords.pressure = 0.5; 
                 
                 lastPoint = coords;
@@ -2383,11 +2601,14 @@
                 }
             });
 
-            const processPointerMove = (e) => {
+            let predictedPoints = [];
+
+            const processPointerMove = (e, isPredicted = false) => {
                 const coords = getCoordinates(e, activeCanvas);
                 const x = coords.x, y = coords.y;
 
                 if (currentTool === 'pan' && selectedImage && imageAction && actionState) {
+                    if (isPredicted) return;
                     const nb = notebooks.find(n => n.id === activeTabId);
                     const page = nb.pages[pageIndex];
                     const p = page.paths[selectedImage.pathIndex];
@@ -2419,7 +2640,7 @@
                 const dist = Math.hypot(coords.x - lastPoint.x, coords.y - lastPoint.y);
                 if (dist < (0.5 / zoomLevel)) return;
 
-                if (currentTool === 'pen' && !hasSnapped) {
+                if (currentTool === 'pen' && !hasSnapped && !isPredicted) {
                     clearTimeout(shapeSnapTimeout);
                     shapeSnapTimeout = setTimeout(() => {
                         if (isDrawing) {
@@ -2440,10 +2661,86 @@
                     coords.pressure = (lastPressure * 0.6) + (coords.pressure * 0.4);
                 }
 
-                lastPressure = coords.pressure;
-                strokePoints.push(coords);
+                if (isPredicted) {
+                    predictedPoints.push(coords);
+                } else {
+                    lastPressure = coords.pressure;
+                    strokePoints.push(coords);
+                    lastPoint = coords;
+                }
+            };
 
-                if (!renderQueue) {
+            activeCanvas.addEventListener('pointermove', (e) => {
+                if (currentTool === 'pan' && !imageAction) return; 
+                if (touchStartFingers >= 2) return;
+                
+                const coords = getCoordinates(e, activeCanvas);
+
+                if (currentTool === 'lasso') {
+                    if (window.isDraggingLasso) {
+                        const dx = coords.x - window.lassoDragStart.x;
+                        const dy = coords.y - window.lassoDragStart.y;
+                        window.lassoDragStart = coords;
+                        window.lassoBoundingBox.x += dx;
+                        window.lassoBoundingBox.y += dy;
+                        window.lassoedPaths.forEach(p => {
+                            if (p.tool === 'image' || p.tool === 'text') {
+                                p.x += dx; p.y += dy;
+                            } else if (p.points) {
+                                p.points.forEach(pt => { pt.x += dx; pt.y += dy; });
+                            }
+                        });
+                        if (!renderQueue) {
+                            renderQueue = true;
+                            requestAnimationFrame(() => {
+                                drawLassoSelection(activeCanvas);
+                                renderQueue = false;
+                            });
+                        }
+                        return;
+                    } else if (isDrawing) {
+                        window.lassoPath.push(coords);
+                        if (!renderQueue) {
+                            renderQueue = true;
+                            requestAnimationFrame(() => {
+                                const actCtx = activeCanvas.getContext('2d', { desynchronized: true });
+                                const dpr = Math.min(window.devicePixelRatio || 2, 2);
+                                actCtx.clearRect(0, 0, activeCanvas.width / dpr, activeCanvas.height / dpr);
+                                actCtx.strokeStyle = '#0A84FF';
+                                actCtx.lineWidth = 2;
+                                actCtx.setLineDash([8, 8]);
+                                actCtx.beginPath();
+                                actCtx.moveTo(window.lassoPath[0].x, window.lassoPath[0].y);
+                                for (let i=1; i<window.lassoPath.length; i++) actCtx.lineTo(window.lassoPath[i].x, window.lassoPath[i].y);
+                                actCtx.stroke();
+                                actCtx.setLineDash([]);
+                                renderQueue = false;
+                            });
+                        }
+                        return;
+                    }
+                }
+
+                if (stylusOnlyMode && e.pointerType !== 'pen' && currentTool !== 'pan') return;
+                if (!isDrawing && currentTool !== 'pan') return;
+                
+                predictedPoints = [];
+
+                if (e.getCoalescedEvents) {
+                    for (let event of e.getCoalescedEvents()) {
+                        processPointerMove(event, false);
+                    }
+                } else {
+                    processPointerMove(e, false);
+                }
+
+                if (e.getPredictedEvents) {
+                    for (let event of e.getPredictedEvents()) {
+                        processPointerMove(event, true);
+                    }
+                }
+
+                if (!renderQueue && currentTool !== 'pan') {
                     renderQueue = true;
                     requestAnimationFrame(() => {
                         if (currentTool === 'eraser') {
@@ -2452,51 +2749,105 @@
                             drawCtx.lineWidth = activeSize;
                             drawCtx.lineCap = 'round'; drawCtx.lineJoin = 'round';
                             drawCtx.beginPath();
-                            drawCtx.moveTo(lastPoint.x, lastPoint.y);
-                            drawCtx.lineTo(coords.x, coords.y);
-                            drawCtx.stroke();
+                            
+                            if (lastRenderedIndex < strokePoints.length) {
+                                let startIdx = Math.max(0, lastRenderedIndex - 1);
+                                drawCtx.moveTo(strokePoints[startIdx].x, strokePoints[startIdx].y);
+                                for (let i = startIdx + 1; i < strokePoints.length; i++) {
+                                    drawCtx.lineTo(strokePoints[i].x, strokePoints[i].y);
+                                }
+                                drawCtx.stroke();
+                                lastRenderedIndex = strokePoints.length;
+                            }
+                        } else if (currentTool === 'laser') {
+                            const actCtx = activeCanvas.getContext('2d', { desynchronized: true });
+                            actCtx.shadowColor = activeColor;
+                            actCtx.shadowBlur = 16;
+                            
+                            if (lastRenderedIndex < strokePoints.length) {
+                                let startIdx = Math.max(0, lastRenderedIndex - 1);
+                                for (let i = startIdx + 1; i < strokePoints.length; i++) {
+                                     renderPathOnContext(actCtx, { tool: 'pen', color: activeColor, width: activeSize, points: [strokePoints[i-1], strokePoints[i]] });
+                                }
+                                lastRenderedIndex = strokePoints.length;
+                            }
+                            actCtx.shadowBlur = 0;
                         } else {
                             const actCtx = activeCanvas.getContext('2d', { desynchronized: true });
                             const physicalWidth = activeCanvas.width / (Math.min(window.devicePixelRatio || 2, 2));
                             const physicalHeight = activeCanvas.height / (Math.min(window.devicePixelRatio || 2, 2));
                             
-                            if (currentTool !== 'laser') actCtx.clearRect(0, 0, physicalWidth, physicalHeight);
+                            actCtx.clearRect(0, 0, physicalWidth, physicalHeight);
 
+                            const renderPoints = strokePoints.concat(predictedPoints);
+                            
                             if (currentTool === 'line') {
-                                renderPathOnContext(actCtx, { tool: 'pen', color: activeColor, width: activeSize, points: [strokePoints[0], coords] });
-                            } else if (currentTool === 'laser') {
-                                actCtx.shadowColor = activeColor;
-                                actCtx.shadowBlur = 16;
-                                renderPathOnContext(actCtx, { tool: 'pen', color: activeColor, width: activeSize, points: [lastPoint, coords] });
-                                actCtx.shadowBlur = 0;
+                                if (renderPoints.length > 0) {
+                                    renderPathOnContext(actCtx, { tool: 'pen', color: activeColor, width: activeSize, points: [strokePoints[0], renderPoints[renderPoints.length - 1]] });
+                                }
                             } else {
-                                renderPathOnContext(actCtx, { tool: currentTool, color: activeColor, width: activeSize, points: strokePoints });
+                                renderPathOnContext(actCtx, { tool: currentTool, color: activeColor, width: activeSize, points: renderPoints });
                             }
                         }
                         renderQueue = false;
-                        lastPoint = coords;
                     });
-                } else {
-                     lastPoint = coords;
-                }
-            };
-
-            activeCanvas.addEventListener('pointermove', (e) => {
-                if (currentTool === 'pan' && !imageAction) return; 
-                if (touchStartFingers >= 2) return;
-                if (stylusOnlyMode && e.pointerType !== 'pen' && currentTool !== 'pan') return;
-                if (!isDrawing && currentTool !== 'pan') return;
-                
-                if (e.getCoalescedEvents) {
-                    for (let event of e.getCoalescedEvents()) {
-                        processPointerMove(event);
-                    }
-                } else {
-                    processPointerMove(e);
                 }
             });
 
             const stopHandler = (e) => {
+                if (currentTool === 'lasso') {
+                    if (window.isDraggingLasso) {
+                        window.isDraggingLasso = false;
+                        return;
+                    }
+                    if (isDrawing && window.lassoPath && window.lassoPath.length > 5) {
+                        isDrawing = false;
+                        const page = notebooks.find(n => n.id === activeTabId).pages[pageIndex];
+                        const selected = [];
+                        const remaining = [];
+                        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                        
+                        page.paths.forEach(p => {
+                            let inside = false;
+                            if (p.tool === 'image' || p.tool === 'text') {
+                                inside = isPointInPolygon({x: p.x, y: p.y}, window.lassoPath);
+                            } else if (p.points) {
+                                inside = p.points.some(pt => isPointInPolygon(pt, window.lassoPath));
+                            }
+                            if (inside) {
+                                selected.push(p);
+                                if (p.tool === 'image' || p.tool === 'text') {
+                                    if(p.x < minX) minX = p.x; if(p.x > maxX) maxX = p.x;
+                                    if(p.y < minY) minY = p.y; if(p.y > maxY) maxY = p.y;
+                                } else {
+                                    p.points.forEach(pt => {
+                                        if(pt.x < minX) minX = pt.x; if(pt.x > maxX) maxX = pt.x;
+                                        if(pt.y < minY) minY = pt.y; if(pt.y > maxY) maxY = pt.y;
+                                    });
+                                }
+                            } else {
+                                remaining.push(p);
+                            }
+                        });
+                        
+                        if (selected.length > 0) {
+                            window.lassoedPaths = selected;
+                            window.lassoBoundingBox = {x: minX, y: minY, w: Math.max(20, maxX - minX), h: Math.max(20, maxY - minY)};
+                            page.paths = remaining;
+                            const actCtx = activeCanvas.getContext('2d');
+                            const dpr = Math.min(window.devicePixelRatio || 2, 2);
+                            actCtx.clearRect(0,0,activeCanvas.width/dpr, activeCanvas.height/dpr);
+                            redrawPage(pageIndex);
+                            drawLassoSelection(activeCanvas);
+                        } else {
+                            const actCtx = activeCanvas.getContext('2d');
+                            const dpr = Math.min(window.devicePixelRatio || 2, 2);
+                            actCtx.clearRect(0,0,activeCanvas.width/dpr, activeCanvas.height/dpr);
+                        }
+                    }
+                    return;
+                }
+
                 if (currentTool === 'pan' && imageAction) {
                     const nb = notebooks.find(n => n.id === activeTabId);
                     saveNotebook(nb);
@@ -2518,6 +2869,9 @@
                     let finalPoints = strokePoints;
                     if (currentTool === 'line') {
                         finalPoints = [strokePoints[0], strokePoints[strokePoints.length - 1]];
+                    } else if (currentTool === 'pen' || currentTool === 'highlighter') {
+                        // Simplify path to save massive amounts of memory
+                        finalPoints = simplifyPath(strokePoints, 0.8 / zoomLevel);
                     }
                     
                     const pathTool = (currentTool === 'line') ? 'pen' : currentTool;
@@ -2729,6 +3083,7 @@
                 if (e.key.toLowerCase() === 'h') window.setTool('highlighter');
                 if (e.key.toLowerCase() === 'l') window.setTool('line');
                 if (e.key.toLowerCase() === 'e') window.setTool('eraser');
+                if (e.key.toLowerCase() === 't') window.setTool('text');
             }
         });
 
